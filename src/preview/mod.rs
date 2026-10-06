@@ -3,13 +3,16 @@ pub mod image;
 pub mod text;
 
 use crate::fs::entry::{human_size, FileEntry};
+use ratatui::layout::Rect;
 use ratatui_image::picker::Picker;
 use ratatui_image::protocol::StatefulProtocol;
 use std::path::Path;
+use text::StyledLine;
 
 pub enum Preview {
+    Loading,
     Dir(Vec<FileEntry>),
-    Text(Vec<String>),
+    Text(Vec<StyledLine>),
     Image(Box<StatefulProtocol>),
     Archive(Vec<String>),
     Binary { size: u64 },
@@ -18,7 +21,7 @@ pub enum Preview {
 
 const ARCHIVE_EXTS: &[&str] = &["zip", "tar", "gz", "tgz", "7z"];
 
-pub fn load(path: &Path, picker: &mut Picker) -> Preview {
+pub fn load(path: &Path, picker: &Picker, preview_area: Rect) -> Preview {
     if path.is_dir() {
         return match crate::fs::list_dir(path, &crate::fs::ListOptions::default()) {
             Ok(entries) => Preview::Dir(entries),
@@ -32,7 +35,7 @@ pub fn load(path: &Path, picker: &mut Picker) -> Preview {
         .map(|s| s.to_lowercase());
 
     if image::is_image(path) {
-        return match image::load(path, picker) {
+        return match image::load(path, picker, preview_area) {
             Ok(proto) => Preview::Image(Box::new(proto)),
             Err(e) => Preview::Error(format!("image decode failed: {e}")),
         };

@@ -23,7 +23,7 @@ pub fn draw(frame: &mut Frame, app: &App, status_area: Rect, prompt_area: Rect) 
         Mode::Normal => app
             .message
             .clone()
-            .unwrap_or_else(|| "j/k move  l/h in/out  d:del r:ren m:mkdir t:touch y:copy x:cut p:paste s:sort .:hidden q:quit".to_string()),
+            .unwrap_or_else(|| "j/k move  enter:open  o:up  d:del r:ren m:mkdir t:touch y:copy x:cut p:paste s:sort .:hidden q:quit".to_string()),
         Mode::Prompt { op, input } => {
             let label = match op {
                 PendingOp::Rename => "rename",

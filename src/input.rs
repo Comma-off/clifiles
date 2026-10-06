@@ -44,11 +44,11 @@ fn handle_normal_key(app: &mut App, key: KeyEvent) -> Result<Signal> {
             app.selected = app.entries.len().saturating_sub(1);
             return Ok(Signal::PreviewDirty);
         }
-        KeyCode::Char('l') | KeyCode::Enter | KeyCode::Right => {
+        KeyCode::Enter | KeyCode::Right => {
             app.enter_selected()?;
             return Ok(Signal::PreviewDirty);
         }
-        KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace => {
+        KeyCode::Char('o') | KeyCode::Left | KeyCode::Backspace => {
             app.go_up()?;
             return Ok(Signal::PreviewDirty);
         }

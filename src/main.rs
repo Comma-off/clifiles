@@ -4,7 +4,9 @@ mod exit;
 mod fs;
 mod input;
 mod picker_setup;
+mod prefetcher;
 mod preview;
+mod preview_worker;
 mod ui;
 
 use anyhow::Result;
@@ -33,13 +35,13 @@ struct Cli {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    let config = config::load();
+
     let start_dir = cli
         .dir
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+        .unwrap_or_else(|| resolve_default_start_dir(config.start_dir))
         .canonicalize()
         .unwrap_or_else(|_| PathBuf::from("."));
-
-    let config = config::load();
 
     let mut terminal = setup_terminal()?;
     let result = run(&mut terminal, start_dir.clone(), config);
@@ -48,6 +50,16 @@ fn main() -> Result<()> {
     let final_cwd = result?;
     exit::write_cwd(&cli.cwd_file, &final_cwd)?;
     Ok(())
+}
+
+fn resolve_default_start_dir(start_dir: config::StartDir) -> PathBuf {
+    let current = || std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    match start_dir {
+        config::StartDir::Current => current(),
+        config::StartDir::Home => directories::UserDirs::new()
+            .map(|dirs| dirs.home_dir().to_path_buf())
+            .unwrap_or_else(current),
+    }
 }
 
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
@@ -68,18 +80,21 @@ fn run(
     start_dir: PathBuf,
     config: config::Config,
 ) -> Result<PathBuf> {
-    let mut picker = picker_setup::build_picker();
+    let picker = picker_setup::build_picker(&config.image);
     let mut app = App::new(start_dir, config)?;
-    app.update_preview(&mut picker);
+    app.request_preview(picker);
 
     loop {
+        app.poll_preview();
+
         let layouts = {
             let mut captured = None;
             terminal.draw(|f| captured = Some(ui::draw(f, &mut app)))?;
             captured.expect("draw always runs the closure")
         };
+        app.last_preview_area = layouts.preview_inner;
 
-        if !event::poll(Duration::from_millis(200))? {
+        if !event::poll(Duration::from_millis(50))? {
             continue;
         }
 
@@ -97,7 +112,7 @@ fn run(
 
         match signal {
             Signal::Quit => break,
-            Signal::PreviewDirty => app.update_preview(&mut picker),
+            Signal::PreviewDirty => app.request_preview(picker),
             Signal::Redraw | Signal::Continue => {}
         }
     }

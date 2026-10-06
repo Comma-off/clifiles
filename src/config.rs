@@ -8,7 +8,9 @@ use std::path::PathBuf;
 pub struct Config {
     pub show_hidden: bool,
     pub sort: SortModeConfig,
+    pub start_dir: StartDir,
     pub colors: Colors,
+    pub image: ImageConfig,
 }
 
 impl Default for Config {
@@ -16,9 +18,45 @@ impl Default for Config {
         Self {
             show_hidden: false,
             sort: SortModeConfig::Name,
+            start_dir: StartDir::Home,
             colors: Colors::default(),
+            image: ImageConfig::default(),
         }
     }
+}
+
+/// Lets a user correct image preview quality/protocol when auto-detection
+/// can't get it right — e.g. over SSH, where the local terminal's
+/// identifying env vars (`TERM_PROGRAM`, `KITTY_WINDOW_ID`, ...) usually
+/// aren't forwarded to the remote shell, so protocol detection has nothing
+/// to go on. `cell_width`/`cell_height` fix low-resolution/blurry images:
+/// without a terminal query (which we deliberately avoid — see
+/// `picker_setup.rs`), the real font cell size in pixels often can't be
+/// determined and falls back to a generic guess, capping how much detail an
+/// image can show. If your terminal reports a pixel size, set it here.
+#[derive(Debug, Clone, Copy, Deserialize, Default)]
+#[serde(default)]
+pub struct ImageConfig {
+    pub protocol: Option<ImageProtocol>,
+    pub cell_width: Option<u16>,
+    pub cell_height: Option<u16>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ImageProtocol {
+    Kitty,
+    Iterm2,
+    Sixel,
+    Halfblocks,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum StartDir {
+    #[default]
+    Home,
+    Current,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Default)]

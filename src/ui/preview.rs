@@ -2,8 +2,8 @@ use crate::app::App;
 use crate::fs::entry::EntryKind;
 use crate::preview::{self, Preview};
 use ratatui::layout::Rect;
-use ratatui::style::Color;
-use ratatui::text::Line;
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 use ratatui_image::StatefulImage;
@@ -14,11 +14,35 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_widget(block, area);
 
     match &mut app.preview {
+        Preview::Loading => {
+            frame.render_widget(
+                Paragraph::new("loading…").style(Style::default().fg(Color::DarkGray)),
+                inner,
+            );
+        }
         Preview::Text(lines) => {
             let text: Vec<Line> = lines
                 .iter()
                 .skip(app.preview_scroll as usize)
-                .map(|l| Line::from(l.clone()))
+                .map(|line| {
+                    let spans: Vec<Span> = line
+                        .iter()
+                        .map(|span| {
+                            let mut style = Style::default();
+                            if let Some((r, g, b)) = span.color {
+                                style = style.fg(Color::Rgb(r, g, b));
+                            }
+                            if span.bold {
+                                style = style.add_modifier(Modifier::BOLD);
+                            }
+                            if span.italic {
+                                style = style.add_modifier(Modifier::ITALIC);
+                            }
+                            Span::styled(span.text.clone(), style)
+                        })
+                        .collect();
+                    Line::from(spans)
+                })
                 .collect();
             frame.render_widget(Paragraph::new(text), inner);
         }

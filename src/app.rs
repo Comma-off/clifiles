@@ -2,7 +2,10 @@ use crate::config::Config;
 use crate::fs::entry::FileEntry;
 use crate::fs::{self, ListOptions};
 use crate::preview::{self, Preview};
+use crate::prefetcher::Prefetcher;
+use crate::preview_worker::PreviewWorker;
 use anyhow::Result;
+use ratatui::layout::Rect;
 use ratatui_image::picker::Picker;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -39,6 +42,16 @@ pub struct App {
     pub preview_scroll: u16,
     pub last_click: Option<(Instant, usize)>,
     pub config: Config,
+    preview_worker: PreviewWorker,
+    preview_generation: u64,
+    prefetcher: Prefetcher,
+    /// The preview pane's area as of the last frame. Used so the *next*
+    /// preview request can pre-resize/encode images to the right size on
+    /// the background thread rather than lazily on the UI thread. Starts
+    /// zero-sized before the first frame, in which case the worker simply
+    /// skips pre-encoding (matching how ratatui-image itself no-ops a
+    /// zero-area resize) and the UI thread pays that one-time cost instead.
+    pub last_preview_area: Rect,
 }
 
 impl App {
@@ -56,10 +69,14 @@ impl App {
             mode: Mode::Normal,
             message: None,
             clipboard: None,
-            preview: Preview::Text(vec![]),
+            preview: Preview::Loading,
             preview_scroll: 0,
             last_click: None,
             config,
+            preview_worker: PreviewWorker::new(),
+            preview_generation: 0,
+            prefetcher: Prefetcher::new(),
+            last_preview_area: Rect::default(),
         };
         app.reload()?;
         Ok(app)
@@ -70,19 +87,79 @@ impl App {
         if self.selected >= self.entries.len() {
             self.selected = self.entries.len().saturating_sub(1);
         }
+        self.prefetch_visible_images();
         Ok(())
+    }
+
+    /// Warms the thumbnail cache for images in the current listing, up
+    /// front, the moment a directory is opened — not just the handful of
+    /// neighbors around the current selection. Mirrors how yazi precaches:
+    /// the decode work is unavoidable either way, but doing it across a
+    /// thread pool ahead of time means it's usually already done by the
+    /// time the user scrolls to any given file. Capped so opening a folder
+    /// with thousands of photos doesn't queue unbounded background work.
+    fn prefetch_visible_images(&self) {
+        const MAX_PREFETCH: usize = 80;
+        let paths = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(i, e)| *i != self.selected && preview::image::is_image(&e.path))
+            .map(|(_, e)| e)
+            .take(MAX_PREFETCH)
+            .map(|e| e.path.clone());
+        self.prefetcher.prefetch_many(paths);
     }
 
     pub fn selected_entry(&self) -> Option<&FileEntry> {
         self.entries.get(self.selected)
     }
 
-    pub fn update_preview(&mut self, picker: &mut Picker) {
+    /// Kicks off a background preview load for the current selection. Does
+    /// not block: the result is picked up later by `poll_preview`. Scrolling
+    /// through several entries before a slow decode (e.g. a large photo)
+    /// finishes simply supersedes it, so the UI never backs up behind
+    /// work the user has already scrolled past.
+    pub fn request_preview(&mut self, picker: Picker) {
         self.preview_scroll = 0;
-        self.preview = match self.selected_entry() {
-            Some(entry) => preview::load(&entry.path, picker),
-            None => Preview::Text(vec![]),
-        };
+        match self.selected_entry() {
+            Some(entry) => {
+                self.preview_generation =
+                    self.preview_worker
+                        .request(entry.path.clone(), picker, self.last_preview_area);
+                self.preview = Preview::Loading;
+            }
+            None => {
+                self.preview_generation = 0;
+                self.preview = Preview::Text(vec![]);
+            }
+        }
+        self.prefetch_neighbors();
+    }
+
+    /// Warms the thumbnail cache for images near the current selection, so
+    /// sequential `j`/`k` browsing through a photo folder doesn't pay full
+    /// decode cost on every single step — see `prefetcher`.
+    fn prefetch_neighbors(&self) {
+        const AHEAD: usize = 2;
+        const BEHIND: usize = 1;
+        let indices = (self.selected.saturating_sub(BEHIND)..=self.selected.saturating_add(AHEAD))
+            .filter(|&i| i != self.selected);
+        for i in indices {
+            if let Some(entry) = self.entries.get(i) {
+                if preview::image::is_image(&entry.path) {
+                    self.prefetcher.prefetch(entry.path.clone());
+                }
+            }
+        }
+    }
+
+    /// Applies a background preview result if one matching the current
+    /// selection has arrived. Cheap to call every frame.
+    pub fn poll_preview(&mut self) {
+        if let Some(preview) = self.preview_worker.poll(self.preview_generation) {
+            self.preview = preview;
+        }
     }
 
     pub fn move_selection(&mut self, delta: i32) {

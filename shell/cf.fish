@@ -4,7 +4,7 @@ function cf
     set -l cwd_file (mktemp)
     command clifiles --cwd-file "$cwd_file" $argv
     if test -s "$cwd_file"
-        cd (cat "$cwd_file")
+        cd -- (cat "$cwd_file")
     end
     rm -f "$cwd_file"
 end
